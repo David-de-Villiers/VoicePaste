@@ -56,6 +56,20 @@ class GlossaryConfig:
 
 
 @dataclass(frozen=True)
+class ShortcutConfig:
+    device: str = "cuda"
+    model_tier: str = "cpu"
+    immediate: bool = True
+    stop_on_silence: bool = True
+    silence_seconds: float = 1.2
+    max_seconds: float = 30.0
+    min_seconds: float = 1.0
+    vad_threshold: float = 0.01
+    pre_speech_padding_ms: int = 200
+    post_speech_padding_ms: int = 300
+
+
+@dataclass(frozen=True)
 class Config:
     backend: str = "faster-whisper"
     model_tier: str = "cpu"
@@ -70,6 +84,7 @@ class Config:
     insertion: InsertionConfig = field(default_factory=InsertionConfig)
     models: ModelConfig = field(default_factory=ModelConfig)
     glossary: GlossaryConfig = field(default_factory=GlossaryConfig)
+    shortcut: ShortcutConfig = field(default_factory=ShortcutConfig)
 
     def normalize_model_tier(self, tier: str | None = None) -> str:
         selected = tier or self.model_tier
@@ -128,6 +143,18 @@ def default_config_dict() -> dict:
                 "bayesian networks": "Bayesian networks",
             },
         },
+        "shortcut": {
+            "device": "cuda",
+            "model_tier": "cpu",
+            "immediate": True,
+            "stop_on_silence": True,
+            "silence_seconds": 1.2,
+            "max_seconds": 30.0,
+            "min_seconds": 1.0,
+            "vad_threshold": 0.01,
+            "pre_speech_padding_ms": 200,
+            "post_speech_padding_ms": 300,
+        },
     }
 
 
@@ -148,6 +175,7 @@ def load_config(path: Path | None = None) -> Config:
         insertion=InsertionConfig(**raw["insertion"]),
         models=ModelConfig(**raw["models"]),
         glossary=GlossaryConfig(**raw["glossary"]),
+        shortcut=ShortcutConfig(**raw["shortcut"]),
     )
 
 
@@ -187,6 +215,18 @@ def write_default_config(path: Path | None = None) -> Path:
                     'latex = "LaTeX"',
                     '"bayesian network" = "Bayesian network"',
                     '"bayesian networks" = "Bayesian networks"',
+                    "",
+                    "[shortcut]",
+                    'device = "cuda"',
+                    'model_tier = "cpu"',
+                    "immediate = true",
+                    "stop_on_silence = true",
+                    "silence_seconds = 1.2",
+                    "max_seconds = 30",
+                    "min_seconds = 1",
+                    "vad_threshold = 0.01",
+                    "pre_speech_padding_ms = 200",
+                    "post_speech_padding_ms = 300",
                     "",
                 ]
             )

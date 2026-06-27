@@ -7,6 +7,7 @@ import sys
 
 from . import __version__
 from . import audio
+from . import clipboard
 from .config import load_config, write_default_config
 from .diagnostics import collect_diagnostics, format_checks
 from .insert import insert_or_copy
@@ -24,6 +25,8 @@ FALLBACK_MESSAGE = "No text field detected. Click where you want the text, then 
 class RuntimeOptions:
     paste: bool = True
     quiet: bool = False
+    verbose: bool = False
+    notify_events: bool = False
     language: str | None = None
     model_tier: str | None = None
     device: str = "auto"
@@ -35,6 +38,8 @@ def _runtime_options(args: argparse.Namespace) -> RuntimeOptions:
     return RuntimeOptions(
         paste=not (no_paste or copy_only),
         quiet=bool(getattr(args, "quiet", False)),
+        verbose=bool(getattr(args, "verbose", False)),
+        notify_events=bool(getattr(args, "immediate", False)),
         language=getattr(args, "language", None),
         model_tier=getattr(args, "model_tier", None) or getattr(args, "tier", None),
         device=getattr(args, "device", "auto"),
@@ -54,19 +59,28 @@ def _handle_transcript(text: str, options: RuntimeOptions | None = None) -> int:
             notify(FALLBACK_MESSAGE)
         if result.inserted:
             print(f"[voicepaste] inserted ({result.message})", file=sys.stderr)
+            if options.notify_events:
+                notify("Pasted transcription.")
         elif result.copied:
             print(f"[voicepaste] copied fallback ({result.message})", file=sys.stderr)
+            if options.notify_events:
+                notify("Copied transcription to clipboard. Click where you want it, then paste.")
         else:
             print(f"[voicepaste] fallback without clipboard ({result.message})", file=sys.stderr)
+            if options.notify_events:
+                notify(f"Could not paste or copy: {result.message}")
         return 0
-    from .clipboard import copy_text
     from .insert import session_type
 
-    copied, message = copy_text(text, session_type())
+    copied, message = clipboard.copy_text(text, session_type())
     if copied:
         print(f"[voicepaste] copied ({message}); paste skipped", file=sys.stderr)
+        if options.notify_events:
+            notify("Copied transcription to clipboard.")
     else:
         print(f"[voicepaste] clipboard unavailable ({message}); paste skipped", file=sys.stderr)
+        if options.notify_events:
+            notify(f"Could not copy transcription: {message}")
     return 0
 
 
@@ -211,17 +225,114 @@ def cmd_models_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
+def _shortcut_value(value, default):
+    return default if value is None else value
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     cfg = load_config()
     options = _runtime_options(args)
-    path = audio.record_until_enter(cfg.record_sample_rate, cfg.max_record_seconds)
+    if getattr(args, "immediate", False):
+        shortcut = cfg.shortcut
+        model_tier = options.model_tier or shortcut.model_tier
+        device = options.device if options.device != "auto" else shortcut.device
+        options = RuntimeOptions(
+            paste=options.paste,
+            quiet=options.quiet,
+            verbose=options.verbose,
+            notify_events=True,
+            language=options.language,
+            model_tier=model_tier,
+            device=device,
+        )
+        silence_seconds = _shortcut_value(args.silence_seconds, shortcut.silence_seconds)
+        max_seconds = _shortcut_value(args.max_seconds, shortcut.max_seconds)
+        min_seconds = _shortcut_value(args.min_seconds, shortcut.min_seconds)
+        vad_threshold = _shortcut_value(args.vad_threshold, shortcut.vad_threshold)
+        stop_on_silence = bool(getattr(args, "stop_on_silence", False) or shortcut.stop_on_silence)
+        notify("Recording started.")
+        recording = audio.record_immediate(
+            cfg.record_sample_rate,
+            stop_on_silence=stop_on_silence,
+            silence_seconds=float(silence_seconds),
+            max_seconds=float(max_seconds),
+            min_seconds=float(min_seconds),
+            vad_threshold=float(vad_threshold),
+        )
+        path = recording.path
+        if options.verbose:
+            stop_message = f"stopped: {recording.reason} after {recording.duration_seconds:.2f}s"
+            print(f"[voicepaste] {stop_message}", file=sys.stderr)
+            notify(stop_message)
+    else:
+        path = audio.record_until_enter(cfg.record_sample_rate, cfg.max_record_seconds)
     try:
         stats = audio.validate_audio(path)
         print(f"[voicepaste] captured {stats.duration_seconds:.2f}s; transcribing...", file=sys.stderr)
+        if options.notify_events:
+            notify("Transcribing...")
         result = transcribe_file(path, cfg, tier=options.model_tier, device=options.device, language=options.language)
         return _handle_transcript(result.text, options)
     finally:
         if cfg.delete_audio and path.exists():
+            path.unlink()
+
+
+def recommended_shortcut_command() -> str:
+    executable = Path.cwd() / ".venv" / "bin" / "voicepaste"
+    return f"{executable} --immediate --stop-on-silence --device cuda --model-tier cpu --quiet"
+
+
+def shortcut_script_text(command: str | None = None) -> str:
+    command = command or recommended_shortcut_command()
+    return "#!/usr/bin/env sh\nexec " + command + ' "$@"\n'
+
+
+def cmd_install_shortcut(args: argparse.Namespace) -> int:
+    command = recommended_shortcut_command()
+    print("Recommended GNOME custom shortcut command:")
+    print(command)
+    print()
+    print("GNOME setup:")
+    print("1. Open Settings -> Keyboard -> View and Customize Shortcuts -> Custom Shortcuts.")
+    print("2. Add a shortcut named VoicePaste Dictate.")
+    print("3. Bind it to the command above, or use ~/.local/bin/voicepaste-dictate after --write-script.")
+    if args.write_script:
+        target = Path.home() / ".local" / "bin" / "voicepaste-dictate"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(shortcut_script_text(command), encoding="utf-8")
+        target.chmod(0o755)
+        print()
+        print(f"Wrote {target}")
+    return 0
+
+
+def _write_vad_threshold(value: float) -> Path:
+    path = write_default_config()
+    text = path.read_text(encoding="utf-8")
+    line = f"vad_threshold = {value:.5f}"
+    if "vad_threshold =" in text:
+        lines = [line if item.strip().startswith("vad_threshold =") else item for item in text.splitlines()]
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    else:
+        path.write_text(text.rstrip() + "\n" + line + "\n", encoding="utf-8")
+    return path
+
+
+def cmd_calibrate_silence(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    rms, threshold, path = audio.calibrate_noise(args.seconds, cfg.record_sample_rate)
+    try:
+        print(f"ambient_rms={rms:.6f}")
+        print(f"suggested_vad_threshold={threshold:.5f}")
+        print("Config:")
+        print(f"[shortcut]\nvad_threshold = {threshold:.5f}")
+        if args.write:
+            written = _write_vad_threshold(threshold)
+            print(f"wrote={written}")
+        return 0
+    finally:
+        if not args.keep and path.exists():
             path.unlink()
 
 
@@ -235,6 +346,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--language", default=None, help="transcription language override, for example en")
     parser.add_argument("--model-tier", choices=tier_choices, help="model tier override")
     parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto", help="transcription device override")
+    parser.add_argument("--immediate", action="store_true", help="start recording immediately without terminal prompts")
+    parser.add_argument("--stop-on-silence", action="store_true", help="stop immediate recording after sustained silence")
+    parser.add_argument("--silence-seconds", type=float, default=None, help="silence duration before stopping immediate recording")
+    parser.add_argument("--max-seconds", type=float, default=None, help="maximum immediate recording duration")
+    parser.add_argument("--min-seconds", type=float, default=None, help="minimum immediate recording duration before silence stop")
+    parser.add_argument("--vad-threshold", type=float, default=None, help="RMS threshold below which audio is treated as silence")
+    parser.add_argument("--verbose", action="store_true", help="print extra recording stop details")
     sub = parser.add_subparsers(dest="command")
 
     doctor = sub.add_parser("doctor", help="report local hardware, desktop, audio, and ASR capability")
@@ -247,40 +365,51 @@ def build_parser() -> argparse.ArgumentParser:
     record.set_defaults(func=cmd_record_test)
 
     transcribe = sub.add_parser("transcribe-test", help="record or transcribe a local test sample")
-    transcribe.add_argument("--file")
-    transcribe.add_argument("--seconds", type=float, default=4.0)
-    transcribe.add_argument("--tier", choices=tier_choices)
-    transcribe.add_argument("--language", default=None)
-    transcribe.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
-    transcribe.add_argument("--keep", action="store_true")
+    transcribe.add_argument("--file", help="existing local audio file to transcribe instead of recording")
+    transcribe.add_argument("--seconds", type=float, default=4.0, help="recording duration when --file is not used")
+    transcribe.add_argument("--tier", choices=tier_choices, help="model tier override")
+    transcribe.add_argument("--language", default=None, help="language override, for example en")
+    transcribe.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto", help="transcription device")
+    transcribe.add_argument("--keep", action="store_true", help="keep temporary recording")
     transcribe.set_defaults(func=cmd_transcribe_test)
 
     bench = sub.add_parser("benchmark", help="measure local transcription speed")
-    bench.add_argument("--file")
-    bench.add_argument("--seconds", type=float, default=8.0)
-    bench.add_argument("--tier", choices=tier_choices)
-    bench.add_argument("--language", default=None)
-    bench.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
-    bench.add_argument("--keep", action="store_true")
+    bench.add_argument("--file", help="existing local audio file to benchmark instead of recording")
+    bench.add_argument("--seconds", type=float, default=8.0, help="recording duration when --file is not used")
+    bench.add_argument("--tier", choices=tier_choices, help="model tier override")
+    bench.add_argument("--language", default=None, help="language override, for example en")
+    bench.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto", help="transcription device")
+    bench.add_argument("--keep", action="store_true", help="keep temporary recording")
     bench.set_defaults(func=cmd_benchmark)
 
     quality = sub.add_parser("quality-test", help="record once, show raw and glossary-corrected transcript")
-    quality.add_argument("--file")
-    quality.add_argument("--seconds", type=float, default=8.0)
-    quality.add_argument("--model-tier", choices=tier_choices)
-    quality.add_argument("--language", default=None)
-    quality.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
-    quality.add_argument("--keep", action="store_true")
+    quality.add_argument("--file", help="existing local audio file to test instead of recording")
+    quality.add_argument("--seconds", type=float, default=8.0, help="recording duration when --file is not used")
+    quality.add_argument("--model-tier", choices=tier_choices, help="model tier override")
+    quality.add_argument("--language", default=None, help="language override, for example en")
+    quality.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto", help="transcription device")
+    quality.add_argument("--keep", action="store_true", help="keep temporary recording")
     quality.set_defaults(func=cmd_quality_test)
 
     compare = sub.add_parser("compare-models", help="record once and compare multiple model tiers")
-    compare.add_argument("--file")
-    compare.add_argument("--tiers", default="fast,cpu")
-    compare.add_argument("--seconds", type=float, default=10.0)
-    compare.add_argument("--language", default=None)
-    compare.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
-    compare.add_argument("--keep", action="store_true")
+    compare.add_argument("--file", help="existing local audio file to reuse instead of recording")
+    compare.add_argument("--tiers", default="fast,cpu", help="comma-separated model tiers, for example fast,cpu,accuracy")
+    compare.add_argument("--seconds", type=float, default=10.0, help="recording duration when --file is not used")
+    compare.add_argument("--language", default=None, help="language override, for example en")
+    compare.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto", help="transcription device")
+    compare.add_argument("--keep", action="store_true", help="keep temporary recording")
     compare.set_defaults(func=cmd_compare_models)
+
+    calibrate = sub.add_parser("calibrate-silence", help="record ambient noise and suggest a VAD threshold")
+    calibrate.add_argument("--seconds", type=float, default=3.0)
+    calibrate.add_argument("--write", action="store_true", help="write suggested threshold to config")
+    calibrate.add_argument("--keep", action="store_true")
+    calibrate.set_defaults(func=cmd_calibrate_silence)
+
+    shortcut = sub.add_parser("install-shortcut", help="print or install GNOME shortcut helper")
+    shortcut.add_argument("--dry-run", action="store_true", help="print instructions without writing files")
+    shortcut.add_argument("--write-script", action="store_true", help="write ~/.local/bin/voicepaste-dictate")
+    shortcut.set_defaults(func=cmd_install_shortcut)
 
     paste_last = sub.add_parser("paste-last", help="paste or copy the last transcript")
     paste_last.add_argument("--no-paste", action="store_true", help="copy and print without simulating paste")
@@ -291,7 +420,7 @@ def build_parser() -> argparse.ArgumentParser:
     models = sub.add_parser("models")
     models_sub = models.add_subparsers(dest="models_command", required=True)
     fetch = models_sub.add_parser("fetch", help="download a model for offline use")
-    fetch.add_argument("--tier", required=True, choices=tier_choices)
+    fetch.add_argument("--tier", required=True, choices=tier_choices, help="model tier to download for offline use")
     fetch.set_defaults(func=cmd_models_fetch)
     return parser
 
@@ -307,6 +436,8 @@ def main(argv: list[str] | None = None) -> int:
         print("\nInterrupted.", file=sys.stderr)
         return 130
     except Exception as exc:
+        if "args" in locals() and getattr(args, "immediate", False):
+            notify(f"VoicePaste error: {exc}")
         print(f"voicepaste: {exc}", file=sys.stderr)
         return 1
 

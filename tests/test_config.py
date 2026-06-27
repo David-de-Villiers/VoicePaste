@@ -10,6 +10,9 @@ def test_default_config_values():
     assert cfg.model_id_for_tier("small") == "Systran/faster-whisper-small.en"
     assert cfg.model_id_for_tier("cpu") == "Systran/faster-whisper-small.en"
     assert cfg.model_id_for_tier("accuracy") == "Systran/faster-whisper-large-v3-turbo"
+    assert cfg.shortcut.immediate is True
+    assert cfg.shortcut.stop_on_silence is True
+    assert cfg.shortcut.silence_seconds == 1.2
 
 
 def test_load_partial_config_merges_defaults(tmp_path: Path):

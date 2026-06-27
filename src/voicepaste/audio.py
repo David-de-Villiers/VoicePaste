@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from queue import Empty, Queue
 import tempfile
 import time
 import wave
 
 import numpy as np
+
+from .vad import SilenceDetector, estimate_threshold, frame_rms
 
 
 @dataclass(frozen=True)
@@ -15,6 +18,13 @@ class AudioStats:
     duration_seconds: float
     rms: float
     sample_rate: int
+
+
+@dataclass(frozen=True)
+class RecordingResult:
+    path: Path
+    reason: str
+    duration_seconds: float
 
 
 def _import_sounddevice():
@@ -53,6 +63,68 @@ def record_fixed(seconds: float, sample_rate: int) -> Path:
     data = sd.rec(frames, samplerate=sample_rate, channels=1, dtype="float32")
     sd.wait()
     return write_wav(data.reshape(-1), sample_rate)
+
+
+def record_immediate(
+    sample_rate: int,
+    *,
+    stop_on_silence: bool,
+    silence_seconds: float,
+    max_seconds: float,
+    min_seconds: float,
+    vad_threshold: float,
+    block_seconds: float = 0.1,
+) -> RecordingResult:
+    sd = _import_sounddevice()
+    queue: Queue[np.ndarray] = Queue()
+    blocksize = max(1, int(sample_rate * block_seconds))
+    detector = SilenceDetector(
+        sample_rate=sample_rate,
+        threshold=vad_threshold,
+        silence_seconds=silence_seconds,
+        min_seconds=min_seconds,
+        max_seconds=max_seconds,
+    )
+    chunks: list[np.ndarray] = []
+    reason = "max-seconds"
+    started = time.monotonic()
+
+    def callback(indata, frames, time_info, status):  # noqa: ANN001
+        queue.put(indata.copy().reshape(-1))
+
+    with sd.InputStream(samplerate=sample_rate, channels=1, dtype="float32", blocksize=blocksize, callback=callback):
+        while True:
+            try:
+                frame = queue.get(timeout=0.25)
+            except Empty:
+                if time.monotonic() - started >= max_seconds:
+                    reason = "max-seconds"
+                    break
+                continue
+            chunks.append(frame)
+            if stop_on_silence:
+                stop_reason = detector.update(frame)
+            else:
+                detector.elapsed_seconds += len(frame) / float(sample_rate)
+                stop_reason = "max-seconds" if detector.elapsed_seconds >= max_seconds else None
+            if stop_reason:
+                reason = stop_reason
+                break
+
+    if not chunks:
+        raise RuntimeError("no audio captured")
+    captured = np.concatenate(chunks).reshape(-1)
+    path = write_wav(captured, sample_rate)
+    return RecordingResult(path=path, reason=reason, duration_seconds=len(captured) / float(sample_rate))
+
+
+def calibrate_noise(seconds: float, sample_rate: int) -> tuple[float, float, Path]:
+    path = record_fixed(seconds, sample_rate)
+    with wave.open(str(path), "rb") as wf:
+        frames = wf.readframes(wf.getnframes())
+    samples = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+    rms = frame_rms(samples)
+    return rms, estimate_threshold(rms), path
 
 
 def write_wav(audio: np.ndarray, sample_rate: int) -> Path:

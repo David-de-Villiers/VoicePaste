@@ -1,3 +1,8 @@
 """VoicePaste local/offline dictation CLI."""
 
-__version__ = "0.1.0"
+from importlib import metadata
+
+try:
+    __version__ = metadata.version("voicepaste")
+except metadata.PackageNotFoundError:
+    __version__ = "0.0.0+unknown"

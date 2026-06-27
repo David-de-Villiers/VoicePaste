@@ -3,3 +3,41 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 *.egg-info/
+
+# Python build and packaging artefacts
+build/
+dist/
+*.egg
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local runtime data
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+*.webm
+*.transcript
+*transcript*.txt
+last.txt
+models/
+.voicepaste/
+
+# Local config/state if tests or manual runs point XDG paths into the repo
+.config/
+.local/
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Agent-local files, not part of the public project
+.agents/
+skills-lock.json

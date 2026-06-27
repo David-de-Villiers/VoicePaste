@@ -1,20 +1,56 @@
 # VoicePaste
 
-VoicePaste is a terminal-first, local/offline Linux dictation utility. It records from the default microphone, transcribes with a local `faster-whisper` model, and pastes the result into the focused application when the desktop allows it.
+VoicePaste is a local/offline Linux dictation CLI. It records microphone audio, transcribes it locally with `faster-whisper`, and inserts the resulting text into the currently focused application when the desktop permits it.
 
-No audio, transcript, correction request, telemetry, or log is sent to a cloud service by the app. Model download is the only networked setup step.
+VoicePaste is terminal-first and shortcut-friendly. It does not include a GUI, tray app, daemon, cloud transcription, telemetry, or remote text correction.
 
-## Validated Target
+## Features
 
-This MVP has been validated on Ubuntu 24.04 with X11 (`DISPLAY=:1`), PipeWire audio, `xdotool` insertion, and `xclip`/`xsel` clipboard fallback. CPU transcription works with `Systran/faster-whisper-small.en` using int8. CUDA transcription works on the validated machine when run from the real user session.
+- Local speech-to-text after model download.
+- CPU and CUDA transcription support through `faster-whisper`.
+- X11 focused-window insertion using clipboard plus `xdotool`.
+- Clipboard fallback with desktop notification and `paste-last`.
+- GNOME custom keyboard shortcut helper without a background daemon.
+- RMS-based silence stopping for shortcut-triggered dictation.
+- Technical dictation glossary and faster-whisper initial prompt support.
+- Diagnostics, recording test, transcription test, benchmark, quality test, and model comparison commands.
 
-## CPU-First Install
+## Platform Support
 
-Use the system Python venv, not Conda. Conda's `libstdc++` can break PortAudio/JACK loading on Ubuntu.
+Current first target:
+
+- Ubuntu 24.04
+- X11
+- PipeWire/ALSA default microphone capture
+- `xdotool` plus `xclip` or `xsel` for insertion
+- NVIDIA CUDA when the local driver and CTranslate2 support it
+
+Wayland support is limited. VoicePaste reports Wayland-related tool availability, but compositor restrictions can prevent focused insertion. Clipboard fallback is expected on many Wayland sessions.
+
+## Privacy And Safety
+
+- Audio is recorded and transcribed locally.
+- Raw audio is written to temporary files and deleted by default.
+- Transcripts are printed locally and stored only as the local `paste-last` state.
+- No cloud ASR, LLM cleanup, telemetry, or remote logging is used by VoicePaste.
+- Downloading ASR models is the setup-time network step.
+- Review model licences and trust properties separately before downloading models.
+- Desktop insertion depends on your Linux session and installed tools.
+
+## Requirements
+
+System packages for Ubuntu/X11:
 
 ```bash
 sudo apt update
 sudo apt install -y python3-venv python3-dev ffmpeg libportaudio2 portaudio19-dev libnotify-bin xdotool xclip xsel
+```
+
+Use a system Python virtual environment. Conda can expose an incompatible `libstdc++` to PortAudio/JACK on Ubuntu.
+
+## Install
+
+```bash
 /usr/bin/python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -U pip
@@ -28,23 +64,43 @@ Run diagnostics:
 voicepaste doctor
 ```
 
-## Use
+## Quick Start
+
+Interactive terminal dictation:
 
 ```bash
 voicepaste
-voicepaste --copy-only
-voicepaste --no-paste
-voicepaste --language en --model-tier small --device cuda
-voicepaste paste-last
-voicepaste quality-test --seconds 10 --device cuda --model-tier small
-voicepaste compare-models --tiers fast,small,accuracy --seconds 10 --device cuda
 ```
 
-The default flow is press Enter to start, press Enter again to stop, transcribe, print the final transcript, then paste. If focused insertion is unavailable, VoicePaste copies to the clipboard when possible, prints the transcript, sends a desktop notification, and stores it as the last transcript.
+Press Enter to start recording, press Enter again to stop, then VoicePaste transcribes and pastes.
 
-`--copy-only` and `--no-paste` record, transcribe, print, and copy without calling `xdotool`.
+Shortcut-friendly dictation:
 
-For technical writing, use `quality-test` to see both the raw ASR output and the final glossary-corrected output:
+```bash
+voicepaste --immediate --stop-on-silence --device cuda --model-tier cpu --quiet
+```
+
+Copy without pasting:
+
+```bash
+voicepaste --copy-only
+voicepaste --no-paste
+```
+
+Reuse the last transcript:
+
+```bash
+voicepaste paste-last
+```
+
+## Technical Dictation
+
+VoicePaste uses two local, deterministic quality aids:
+
+- `initial_prompt` is passed to faster-whisper to bias recognition toward technical terms such as Bayesian networks, conditional independence, d-separation, expected utility, and LaTeX.
+- `[glossary.replacements]` runs after ASR to fix recurring terms without an LLM or network call.
+
+Quality test:
 
 ```bash
 voicepaste quality-test --seconds 10 --device cuda --model-tier small
@@ -57,27 +113,82 @@ raw_transcript=... de-separation and latex ...
 final_transcript=... d-separation and LaTeX ...
 ```
 
-Use `compare-models` to record once and run the same audio through several tiers:
+Compare model tiers using one recording:
 
 ```bash
 voicepaste compare-models --tiers fast,cpu --seconds 10 --device cuda
 ```
 
-## Test Commands
+Model tier and device are separate:
+
+- `--model-tier` selects the ASR model size/profile.
+- `--device` selects where inference runs: `cpu`, `cuda`, or `auto`.
+- `cpu` is retained as a backward-compatible tier alias for the original small CPU-safe model. Prefer `small` in new commands and configs.
+
+For an RTX 3070 Ti Laptop GPU, start with:
 
 ```bash
-voicepaste doctor
-voicepaste record-test
-voicepaste transcribe-test --seconds 5
-voicepaste benchmark --seconds 8
-voicepaste quality-test --seconds 10 --device cuda --model-tier cpu
-voicepaste compare-models --tiers fast,cpu --seconds 10 --device cuda
-pytest -q
+voicepaste --device cuda --model-tier small
 ```
 
-## Config
+For higher accuracy when latency is acceptable:
 
-Config is stored at `~/.config/voicepaste/config.toml`.
+```bash
+voicepaste models fetch --tier accuracy
+voicepaste --device cuda --model-tier accuracy
+```
+
+## GNOME Keyboard Shortcut
+
+VoicePaste does not install a daemon or listen for global hotkeys. Bind a normal GNOME custom shortcut to a one-shot command.
+
+Calibrate silence detection:
+
+```bash
+voicepaste calibrate-silence
+```
+
+Optionally write the suggested threshold to config:
+
+```bash
+voicepaste calibrate-silence --write
+```
+
+Print shortcut instructions:
+
+```bash
+voicepaste install-shortcut --dry-run
+```
+
+Create a helper script:
+
+```bash
+voicepaste install-shortcut --write-script
+```
+
+This writes:
+
+```text
+~/.local/bin/voicepaste-dictate
+```
+
+GNOME setup:
+
+1. Open Settings -> Keyboard -> View and Customize Shortcuts -> Custom Shortcuts.
+2. Add a shortcut named `VoicePaste Dictate`.
+3. Bind it to `~/.local/bin/voicepaste-dictate` or to the full command printed by `voicepaste install-shortcut --dry-run`.
+
+Shortcut mode starts recording immediately, shows notifications for recording/transcribing/paste/fallback/error, stops after sustained silence, and also stops at `max_seconds`. If it cuts you off too early, increase `silence_seconds` or lower `vad_threshold`. If it waits too long after you stop speaking, decrease `silence_seconds` or raise `vad_threshold`.
+
+## Configuration
+
+Config is stored at:
+
+```text
+~/.config/voicepaste/config.toml
+```
+
+Default shape:
 
 ```toml
 backend = "faster-whisper"
@@ -109,60 +220,83 @@ enabled = true
 latex = "LaTeX"
 "bayesian network" = "Bayesian network"
 "bayesian networks" = "Bayesian networks"
+
+[shortcut]
+device = "cuda"
+model_tier = "cpu"
+immediate = true
+stop_on_silence = true
+silence_seconds = 1.2
+max_seconds = 30
+min_seconds = 1
+vad_threshold = 0.01
+pre_speech_padding_ms = 200
+post_speech_padding_ms = 300
 ```
 
 Clipboard restore is off by default. If `restore_clipboard = true`, VoicePaste reads the current clipboard, pastes the transcript, then attempts to restore the previous clipboard content after paste.
 
-## Technical Dictation
-
-VoicePaste uses two local, deterministic quality aids:
-
-- `initial_prompt` is passed to faster-whisper to bias recognition toward technical terms such as Bayesian networks, conditional independence, d-separation, expected utility, and LaTeX.
-- `[glossary.replacements]` runs after ASR to fix common recurring terms without an LLM or network call.
-
-Glossary replacements are case-insensitive and deterministic. They are intended for known terms, not broad grammar correction.
-
-Model tier and device are separate:
-
-- `--model-tier` selects the ASR model size/profile.
-- `--device` selects where inference runs: `cpu`, `cuda`, or `auto`.
-- `cpu` is retained as a backward-compatible tier alias for the original small CPU-safe model. Prefer `small` in new commands and configs.
-
-On the validated RTX 3070 Ti Laptop GPU, recommended day-to-day technical dictation settings are:
-
-```bash
-voicepaste --device cuda --model-tier small
-```
-
-For more accuracy when latency is acceptable:
-
-```bash
-voicepaste models fetch --tier accuracy
-voicepaste --device cuda --model-tier accuracy
-```
-
 ## CUDA Notes
 
-Keep `model_tier = "cpu"` or `model_tier = "small"` as the default until `voicepaste doctor` confirms CUDA works. Use explicit overrides when testing:
+Keep `model_tier = "cpu"` or `model_tier = "small"` as the default until `voicepaste doctor` confirms CUDA works.
 
 ```bash
 voicepaste transcribe-test --device cuda --tier cpu
 voicepaste benchmark --device cuda --tier cpu
 ```
 
-For higher accuracy after CUDA is confirmed:
+If CUDA is unavailable, use:
 
 ```bash
-voicepaste models fetch --tier accuracy
-voicepaste benchmark --device cuda --tier accuracy
+voicepaste --device cpu --model-tier cpu
 ```
 
 ## Troubleshooting
 
-- If `record-test` fails with a PortAudio/JACK error mentioning `GLIBCXX_3.4.32`, recreate `.venv` with `/usr/bin/python3`, deactivate Conda, and remove Miniconda/Anaconda paths from `LD_LIBRARY_PATH`.
-- If `doctor` warns that Conda base is active, run `conda deactivate` before launching VoicePaste.
-- If `record-test` cannot see audio devices from an isolated shell, run it from the real desktop user session where PipeWire is available.
-- X11 insertion requires `xdotool` plus `xclip` or `xsel`.
-- `xclip` intentionally remains alive as the clipboard owner on X11. VoicePaste starts it without waiting, so the CLI should not hang.
-- Wayland support is diagnostic-first in this MVP. Compositor restrictions can prevent synthetic typing or focus detection, so clipboard fallback is expected.
-- Raw audio is written to temporary files and deleted by default. Test commands keep samples only when passed `--keep`.
+- Conda / `GLIBCXX`: if recording fails with a PortAudio/JACK error mentioning `GLIBCXX_3.4.32`, recreate `.venv` with `/usr/bin/python3`, deactivate Conda, and remove Miniconda/Anaconda paths from `LD_LIBRARY_PATH`.
+- PortAudio/JACK: install `libportaudio2` and `portaudio19-dev`, then run `voicepaste record-test`.
+- CUDA unavailable: run `voicepaste doctor`; if CUDA probes fail, use `--device cpu` until the NVIDIA driver and CTranslate2 CUDA support work.
+- Wayland: focused insertion is compositor-dependent. Prefer clipboard fallback unless your compositor and tools support synthetic paste.
+- X11 insertion: install `xdotool` and `xclip` or `xsel`.
+- `xclip`: on X11, `xclip` intentionally remains alive as clipboard owner. VoicePaste starts it without waiting, so the CLI should not hang.
+- Raw audio: temporary recordings are deleted by default. Test commands keep samples only when passed `--keep`.
+
+## Development
+
+```bash
+/usr/bin/python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -e '.[dev]'
+python -m compileall src tests
+pytest -q
+```
+
+Optional lint:
+
+```bash
+ruff check .
+```
+
+Hardware-facing commands:
+
+```bash
+voicepaste doctor
+voicepaste record-test
+voicepaste transcribe-test --seconds 5
+voicepaste benchmark --seconds 8
+voicepaste install-shortcut --dry-run
+```
+
+CI runs compile and unit tests only. It does not require a microphone, GPU, display server, CUDA, desktop insertion tools, or downloaded ASR models.
+
+## Current Limitations
+
+- Linux/Ubuntu is the first target.
+- X11 insertion is validated; Wayland focused insertion is limited.
+- ASR quality depends on the downloaded model, microphone, room noise, and hardware.
+- No GUI, tray application, daemon, streaming transcription, cloud APIs, Ollama cleanup, or built-in global hotkey listener.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

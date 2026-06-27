@@ -12,7 +12,7 @@ from .diagnostics import collect_diagnostics, format_checks
 from .insert import insert_or_copy
 from .models import fetch_model
 from .notify import notify
-from .postprocess import cleanup_text
+from .postprocess import cleanup_text, final_transcript
 from .state import read_last_transcript, save_last_transcript
 from .transcribe import transcribe_file
 
@@ -44,7 +44,7 @@ def _runtime_options(args: argparse.Namespace) -> RuntimeOptions:
 def _handle_transcript(text: str, options: RuntimeOptions | None = None) -> int:
     options = options or RuntimeOptions()
     cfg = load_config()
-    text = cleanup_text(text)
+    text = final_transcript(text, cfg)
     save_last_transcript(text)
     if not options.quiet:
         print(text)
@@ -101,7 +101,7 @@ def cmd_transcribe_test(args: argparse.Namespace) -> int:
     try:
         audio.validate_audio(path, min_rms=0.0)
         result = transcribe_file(path, cfg, tier=options.model_tier, device=options.device, language=options.language)
-        print(cleanup_text(result.text))
+        print(final_transcript(result.text, cfg))
         print(
             f"[voicepaste] backend={result.backend} device={result.device} compute={result.compute_type} "
             f"elapsed={result.duration_seconds:.2f}s model={result.model_path}",
@@ -129,6 +129,67 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
         print(f"device={result.device}")
         print(f"compute_type={result.compute_type}")
         print(f"model={result.model_path}")
+        return 0
+    finally:
+        if owned and not args.keep and path.exists():
+            path.unlink()
+
+
+def cmd_quality_test(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    options = _runtime_options(args)
+    path = Path(args.file) if getattr(args, "file", None) else audio.record_fixed(args.seconds, cfg.record_sample_rate)
+    owned = getattr(args, "file", None) is None
+    try:
+        stats = audio.validate_audio(path, min_rms=0.0)
+        result = transcribe_file(path, cfg, tier=options.model_tier, device=options.device, language=options.language)
+        final = final_transcript(result.text, cfg)
+        print(f"audio_seconds={stats.duration_seconds:.2f}")
+        print(f"raw_transcript={cleanup_text(result.text)}")
+        print(f"final_transcript={final}")
+        print(f"elapsed_seconds={result.duration_seconds:.2f}")
+        print(f"device={result.device}")
+        print(f"compute_type={result.compute_type}")
+        print(f"model={result.model_path}")
+        return 0
+    finally:
+        if owned and not args.keep and path.exists():
+            path.unlink()
+
+
+def _parse_tiers(value: str) -> list[str]:
+    tiers = [tier.strip() for tier in value.split(",") if tier.strip()]
+    valid = {"fast", "small", "cpu", "accuracy"}
+    unknown = [tier for tier in tiers if tier not in valid]
+    if unknown:
+        raise argparse.ArgumentTypeError(f"unknown tier(s): {', '.join(unknown)}")
+    if not tiers:
+        raise argparse.ArgumentTypeError("at least one tier is required")
+    return tiers
+
+
+def cmd_compare_models(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    options = _runtime_options(args)
+    tiers = _parse_tiers(args.tiers)
+    path = Path(args.file) if getattr(args, "file", None) else audio.record_fixed(args.seconds, cfg.record_sample_rate)
+    owned = getattr(args, "file", None) is None
+    try:
+        stats = audio.validate_audio(path, min_rms=0.0)
+        print(f"audio={path}")
+        print(f"audio_seconds={stats.duration_seconds:.2f}")
+        for tier in tiers:
+            result = transcribe_file(path, cfg, tier=tier, device=options.device, language=options.language)
+            final = final_transcript(result.text, cfg)
+            rtf = result.duration_seconds / stats.duration_seconds if stats.duration_seconds else 0.0
+            print(f"tier={tier}")
+            print(f"raw_transcript={cleanup_text(result.text)}")
+            print(f"final_transcript={final}")
+            print(f"elapsed_seconds={result.duration_seconds:.2f}")
+            print(f"realtime_factor={rtf:.2f}")
+            print(f"device={result.device}")
+            print(f"compute_type={result.compute_type}")
+            print(f"model={result.model_path}")
         return 0
     finally:
         if owned and not args.keep and path.exists():
@@ -165,13 +226,14 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    tier_choices = ["fast", "small", "cpu", "accuracy"]
     parser = argparse.ArgumentParser(prog="voicepaste")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--no-paste", action="store_true", help="copy and print transcript without simulating paste")
     parser.add_argument("--copy-only", action="store_true", help="copy and print transcript without simulating paste")
     parser.add_argument("--quiet", action="store_true", help="do not print the final transcript")
     parser.add_argument("--language", default=None, help="transcription language override, for example en")
-    parser.add_argument("--model-tier", choices=["fast", "cpu", "accuracy"], help="model tier override")
+    parser.add_argument("--model-tier", choices=tier_choices, help="model tier override")
     parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto", help="transcription device override")
     sub = parser.add_subparsers(dest="command")
 
@@ -187,7 +249,7 @@ def build_parser() -> argparse.ArgumentParser:
     transcribe = sub.add_parser("transcribe-test", help="record or transcribe a local test sample")
     transcribe.add_argument("--file")
     transcribe.add_argument("--seconds", type=float, default=4.0)
-    transcribe.add_argument("--tier", choices=["fast", "cpu", "accuracy"])
+    transcribe.add_argument("--tier", choices=tier_choices)
     transcribe.add_argument("--language", default=None)
     transcribe.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
     transcribe.add_argument("--keep", action="store_true")
@@ -196,11 +258,29 @@ def build_parser() -> argparse.ArgumentParser:
     bench = sub.add_parser("benchmark", help="measure local transcription speed")
     bench.add_argument("--file")
     bench.add_argument("--seconds", type=float, default=8.0)
-    bench.add_argument("--tier", choices=["fast", "cpu", "accuracy"])
+    bench.add_argument("--tier", choices=tier_choices)
     bench.add_argument("--language", default=None)
     bench.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
     bench.add_argument("--keep", action="store_true")
     bench.set_defaults(func=cmd_benchmark)
+
+    quality = sub.add_parser("quality-test", help="record once, show raw and glossary-corrected transcript")
+    quality.add_argument("--file")
+    quality.add_argument("--seconds", type=float, default=8.0)
+    quality.add_argument("--model-tier", choices=tier_choices)
+    quality.add_argument("--language", default=None)
+    quality.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
+    quality.add_argument("--keep", action="store_true")
+    quality.set_defaults(func=cmd_quality_test)
+
+    compare = sub.add_parser("compare-models", help="record once and compare multiple model tiers")
+    compare.add_argument("--file")
+    compare.add_argument("--tiers", default="fast,cpu")
+    compare.add_argument("--seconds", type=float, default=10.0)
+    compare.add_argument("--language", default=None)
+    compare.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
+    compare.add_argument("--keep", action="store_true")
+    compare.set_defaults(func=cmd_compare_models)
 
     paste_last = sub.add_parser("paste-last", help="paste or copy the last transcript")
     paste_last.add_argument("--no-paste", action="store_true", help="copy and print without simulating paste")
@@ -211,7 +291,7 @@ def build_parser() -> argparse.ArgumentParser:
     models = sub.add_parser("models")
     models_sub = models.add_subparsers(dest="models_command", required=True)
     fetch = models_sub.add_parser("fetch", help="download a model for offline use")
-    fetch.add_argument("--tier", required=True, choices=["fast", "cpu", "accuracy"])
+    fetch.add_argument("--tier", required=True, choices=tier_choices)
     fetch.set_defaults(func=cmd_models_fetch)
     return parser
 

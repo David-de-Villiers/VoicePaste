@@ -7,6 +7,8 @@ def test_default_config_values():
     cfg = Config()
     assert cfg.backend == "faster-whisper"
     assert cfg.model_tier == "cpu"
+    assert cfg.model_id_for_tier("small") == "Systran/faster-whisper-small.en"
+    assert cfg.model_id_for_tier("cpu") == "Systran/faster-whisper-small.en"
     assert cfg.model_id_for_tier("accuracy") == "Systran/faster-whisper-large-v3-turbo"
 
 

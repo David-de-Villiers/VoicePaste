@@ -48,6 +48,7 @@ def transcribe_file(
     prefer_gpu: bool = True,
     device: str = "auto",
     language: str | None = None,
+    initial_prompt: str | None = None,
 ) -> TranscriptionResult:
     try:
         from faster_whisper import WhisperModel
@@ -57,7 +58,13 @@ def transcribe_file(
     selected_device, compute_type = select_device_and_compute(device, prefer_gpu)
     started = time.monotonic()
     model = WhisperModel(str(model_path), device=selected_device, compute_type=compute_type)
-    segments, _info = model.transcribe(str(path), language=language or cfg.language, vad_filter=True)
+    prompt = cfg.initial_prompt if initial_prompt is None else initial_prompt
+    segments, _info = model.transcribe(
+        str(path),
+        language=language or cfg.language,
+        vad_filter=True,
+        initial_prompt=prompt or None,
+    )
     text = " ".join(segment.text.strip() for segment in segments).strip()
     return TranscriptionResult(
         text=text,

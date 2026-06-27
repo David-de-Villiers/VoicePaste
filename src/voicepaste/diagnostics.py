@@ -133,7 +133,7 @@ def collect_diagnostics(cfg: Config) -> list[Check]:
     model_id = cfg.model_id_for_tier()
     local_model = model_local_path(model_id)
     checks.append(Check("Backend", cfg.backend, cfg.backend == "faster-whisper"))
-    checks.append(Check("Model tier", cfg.model_tier, cfg.model_tier in {"fast", "cpu", "accuracy"}))
+    checks.append(Check("Model tier", cfg.model_tier, cfg.model_tier in {"fast", "small", "cpu", "accuracy"}))
     checks.append(Check("Model", f"{model_id} -> {local_model}", local_model.exists()))
     if local_model.exists() and faster_ok:
         try:

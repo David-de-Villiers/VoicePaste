@@ -35,8 +35,24 @@ class InsertionConfig:
 @dataclass(frozen=True)
 class ModelConfig:
     fast: str = "Systran/faster-whisper-small.en"
+    small: str = "Systran/faster-whisper-small.en"
     cpu: str = "Systran/faster-whisper-small.en"
     accuracy: str = "Systran/faster-whisper-large-v3-turbo"
+
+
+@dataclass(frozen=True)
+class GlossaryConfig:
+    enabled: bool = True
+    replacements: dict[str, str] = field(
+        default_factory=lambda: {
+            "de-separation": "d-separation",
+            "D separation": "d-separation",
+            "d separation": "d-separation",
+            "latex": "LaTeX",
+            "bayesian network": "Bayesian network",
+            "bayesian networks": "Bayesian networks",
+        }
+    )
 
 
 @dataclass(frozen=True)
@@ -47,13 +63,24 @@ class Config:
     record_sample_rate: int = 16000
     max_record_seconds: int = 120
     delete_audio: bool = True
+    initial_prompt: str = (
+        "Bayesian networks, conditional independence, d-separation, expected utility, "
+        "LaTeX, probabilistic graphical models, posterior, prior, likelihood, inference."
+    )
     insertion: InsertionConfig = field(default_factory=InsertionConfig)
     models: ModelConfig = field(default_factory=ModelConfig)
+    glossary: GlossaryConfig = field(default_factory=GlossaryConfig)
+
+    def normalize_model_tier(self, tier: str | None = None) -> str:
+        selected = tier or self.model_tier
+        if selected == "cpu":
+            return "cpu"
+        if selected not in {"fast", "small", "accuracy"}:
+            raise ValueError(f"unknown model tier: {selected}")
+        return selected
 
     def model_id_for_tier(self, tier: str | None = None) -> str:
-        selected = tier or self.model_tier
-        if selected not in {"fast", "cpu", "accuracy"}:
-            raise ValueError(f"unknown model tier: {selected}")
+        selected = self.normalize_model_tier(tier)
         return getattr(self.models, selected)
 
 
@@ -75,6 +102,10 @@ def default_config_dict() -> dict:
         "record_sample_rate": 16000,
         "max_record_seconds": 120,
         "delete_audio": True,
+        "initial_prompt": (
+            "Bayesian networks, conditional independence, d-separation, expected utility, "
+            "LaTeX, probabilistic graphical models, posterior, prior, likelihood, inference."
+        ),
         "insertion": {
             "prefer_clipboard_paste": True,
             "restore_clipboard": False,
@@ -82,8 +113,20 @@ def default_config_dict() -> dict:
         },
         "models": {
             "fast": "Systran/faster-whisper-small.en",
+            "small": "Systran/faster-whisper-small.en",
             "cpu": "Systran/faster-whisper-small.en",
             "accuracy": "Systran/faster-whisper-large-v3-turbo",
+        },
+        "glossary": {
+            "enabled": True,
+            "replacements": {
+                "de-separation": "d-separation",
+                "D separation": "d-separation",
+                "d separation": "d-separation",
+                "latex": "LaTeX",
+                "bayesian network": "Bayesian network",
+                "bayesian networks": "Bayesian networks",
+            },
         },
     }
 
@@ -101,8 +144,10 @@ def load_config(path: Path | None = None) -> Config:
         record_sample_rate=int(raw["record_sample_rate"]),
         max_record_seconds=int(raw["max_record_seconds"]),
         delete_audio=bool(raw["delete_audio"]),
+        initial_prompt=str(raw.get("initial_prompt", "")),
         insertion=InsertionConfig(**raw["insertion"]),
         models=ModelConfig(**raw["models"]),
+        glossary=GlossaryConfig(**raw["glossary"]),
     )
 
 
@@ -119,6 +164,7 @@ def write_default_config(path: Path | None = None) -> Path:
                     'record_sample_rate = 16000',
                     'max_record_seconds = 120',
                     'delete_audio = true',
+                    'initial_prompt = "Bayesian networks, conditional independence, d-separation, expected utility, LaTeX, probabilistic graphical models, posterior, prior, likelihood, inference."',
                     "",
                     "[insertion]",
                     "prefer_clipboard_paste = true",
@@ -127,8 +173,20 @@ def write_default_config(path: Path | None = None) -> Path:
                     "",
                     "[models]",
                     'fast = "Systran/faster-whisper-small.en"',
+                    'small = "Systran/faster-whisper-small.en"',
                     'cpu = "Systran/faster-whisper-small.en"',
                     'accuracy = "Systran/faster-whisper-large-v3-turbo"',
+                    "",
+                    "[glossary]",
+                    "enabled = true",
+                    "",
+                    "[glossary.replacements]",
+                    '"de-separation" = "d-separation"',
+                    '"D separation" = "d-separation"',
+                    '"d separation" = "d-separation"',
+                    'latex = "LaTeX"',
+                    '"bayesian network" = "Bayesian network"',
+                    '"bayesian networks" = "Bayesian networks"',
                     "",
                 ]
             )

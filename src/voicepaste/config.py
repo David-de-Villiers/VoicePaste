@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Configuration models and XDG path helpers for VoicePaste."""
+
 from dataclasses import dataclass, field
 from pathlib import Path
 import os
@@ -10,23 +12,33 @@ APP_NAME = "voicepaste"
 
 
 def config_path() -> Path:
+    """Return the XDG config file path for VoicePaste."""
+
     return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP_NAME / "config.toml"
 
 
 def data_dir() -> Path:
+    """Return the XDG data directory used for downloaded models."""
+
     return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / APP_NAME
 
 
 def state_dir() -> Path:
+    """Return the XDG state directory used for last transcript state."""
+
     return Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / APP_NAME
 
 
 def model_dir() -> Path:
+    """Return the local model cache directory."""
+
     return data_dir() / "models"
 
 
 @dataclass(frozen=True)
 class InsertionConfig:
+    """Desktop insertion behavior."""
+
     prefer_clipboard_paste: bool = True
     restore_clipboard: bool = False
     paste_key: str = "ctrl+v"
@@ -34,6 +46,8 @@ class InsertionConfig:
 
 @dataclass(frozen=True)
 class ModelConfig:
+    """Model identifiers for supported quality tiers."""
+
     fast: str = "Systran/faster-whisper-small.en"
     small: str = "Systran/faster-whisper-small.en"
     cpu: str = "Systran/faster-whisper-small.en"
@@ -42,6 +56,8 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class GlossaryConfig:
+    """Deterministic post-transcription phrase replacements."""
+
     enabled: bool = True
     replacements: dict[str, str] = field(
         default_factory=lambda: {
@@ -57,6 +73,8 @@ class GlossaryConfig:
 
 @dataclass(frozen=True)
 class ShortcutConfig:
+    """Defaults used by non-interactive shortcut mode."""
+
     device: str = "cuda"
     model_tier: str = "cpu"
     immediate: bool = True
@@ -71,6 +89,8 @@ class ShortcutConfig:
 
 @dataclass(frozen=True)
 class Config:
+    """Top-level VoicePaste configuration."""
+
     backend: str = "faster-whisper"
     model_tier: str = "cpu"
     language: str = "en"
@@ -87,6 +107,8 @@ class Config:
     shortcut: ShortcutConfig = field(default_factory=ShortcutConfig)
 
     def normalize_model_tier(self, tier: str | None = None) -> str:
+        """Validate and normalize a model tier name."""
+
         selected = tier or self.model_tier
         if selected == "cpu":
             return "cpu"
@@ -95,6 +117,8 @@ class Config:
         return selected
 
     def model_id_for_tier(self, tier: str | None = None) -> str:
+        """Return the configured model identifier for a tier."""
+
         selected = self.normalize_model_tier(tier)
         return getattr(self.models, selected)
 
@@ -110,6 +134,8 @@ def _merge_table(defaults: dict, overrides: dict) -> dict:
 
 
 def default_config_dict() -> dict:
+    """Return the default TOML-compatible configuration mapping."""
+
     return {
         "backend": "faster-whisper",
         "model_tier": "cpu",
@@ -159,6 +185,8 @@ def default_config_dict() -> dict:
 
 
 def load_config(path: Path | None = None) -> Config:
+    """Load configuration, merging partial user config with defaults."""
+
     path = path or config_path()
     raw = default_config_dict()
     if path.exists():
@@ -180,6 +208,8 @@ def load_config(path: Path | None = None) -> Config:
 
 
 def write_default_config(path: Path | None = None) -> Path:
+    """Create the default config file if it does not already exist."""
+
     path = path or config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():

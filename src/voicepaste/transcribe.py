@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Local faster-whisper transcription backend."""
+
 from dataclasses import dataclass
 from pathlib import Path
 import time
@@ -10,6 +12,8 @@ from .models import require_local_model
 
 @dataclass(frozen=True)
 class TranscriptionResult:
+    """Result metadata for one local transcription run."""
+
     text: str
     duration_seconds: float
     backend: str
@@ -28,6 +32,8 @@ def _cuda_available() -> bool:
 
 
 def select_device_and_compute(device: str = "auto", prefer_gpu: bool = True) -> tuple[str, str]:
+    """Choose the CTranslate2 device and compute type for ASR."""
+
     if device not in {"auto", "cpu", "cuda"}:
         raise ValueError(f"unsupported device: {device}")
     if device == "cpu":
@@ -50,6 +56,22 @@ def transcribe_file(
     language: str | None = None,
     initial_prompt: str | None = None,
 ) -> TranscriptionResult:
+    """Transcribe a local audio file with a locally cached faster-whisper model.
+
+    Args:
+        path: Local audio file to transcribe.
+        cfg: Loaded VoicePaste configuration.
+        tier: Optional model tier override.
+        prefer_gpu: Whether `auto` may choose CUDA.
+        device: `auto`, `cpu`, or `cuda`.
+        language: Optional language override.
+        initial_prompt: Optional faster-whisper prompt override. If omitted,
+            the configured prompt is used.
+
+    Returns:
+        TranscriptionResult containing text and backend metadata.
+    """
+
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:

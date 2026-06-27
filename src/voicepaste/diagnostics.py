@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Environment and dependency diagnostics for `voicepaste doctor`."""
+
 from dataclasses import dataclass
 from importlib import metadata
 import importlib.util
@@ -17,6 +19,8 @@ from .models import model_local_path
 
 @dataclass(frozen=True)
 class Check:
+    """One diagnostic check result."""
+
     name: str
     value: str
     ok: bool | None = None
@@ -74,6 +78,8 @@ def _running_from_project_venv() -> Check:
 
 
 def collect_diagnostics(cfg: Config) -> list[Check]:
+    """Collect hardware, desktop, dependency, and model diagnostics."""
+
     checks: list[Check] = []
     checks.append(Check("OS", platform.platform(), True))
     checks.append(Check("Python", sys.version.split()[0], sys.version_info >= (3, 11)))
@@ -154,6 +160,8 @@ def collect_diagnostics(cfg: Config) -> list[Check]:
 
 
 def format_checks(checks: list[Check]) -> str:
+    """Format diagnostic checks for terminal output."""
+
     lines = []
     for check in checks:
         marker = "?"

@@ -1,3 +1,10 @@
+"""Command-line interface for VoicePaste.
+
+This module wires the user-facing commands to the smaller VoicePaste modules
+that handle audio capture, transcription, insertion, clipboard fallback,
+notifications, configuration, and local model management.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -23,6 +30,8 @@ FALLBACK_MESSAGE = "No text field detected. Click where you want the text, then 
 
 @dataclass(frozen=True)
 class RuntimeOptions:
+    """Runtime overrides shared by dictation and transcript handling commands."""
+
     paste: bool = True
     quiet: bool = False
     verbose: bool = False
@@ -33,6 +42,8 @@ class RuntimeOptions:
 
 
 def _runtime_options(args: argparse.Namespace) -> RuntimeOptions:
+    """Build behavior flags from parsed CLI arguments."""
+
     no_paste = bool(getattr(args, "no_paste", False))
     copy_only = bool(getattr(args, "copy_only", False))
     return RuntimeOptions(
@@ -47,6 +58,16 @@ def _runtime_options(args: argparse.Namespace) -> RuntimeOptions:
 
 
 def _handle_transcript(text: str, options: RuntimeOptions | None = None) -> int:
+    """Normalize, persist, print, and deliver a transcript.
+
+    Args:
+        text: Raw transcription text from the ASR backend.
+        options: Runtime delivery options. Defaults to normal paste behavior.
+
+    Returns:
+        Process exit status.
+    """
+
     options = options or RuntimeOptions()
     cfg = load_config()
     text = final_transcript(text, cfg)
@@ -85,6 +106,8 @@ def _handle_transcript(text: str, options: RuntimeOptions | None = None) -> int:
 
 
 def cmd_doctor(_args: argparse.Namespace) -> int:
+    """Print diagnostics for local hardware, desktop, audio, and ASR support."""
+
     write_default_config()
     cfg = load_config()
     print(format_checks(collect_diagnostics(cfg)))
@@ -92,6 +115,8 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
 
 
 def cmd_record_test(args: argparse.Namespace) -> int:
+    """Record a short local sample and validate that capture produced audio."""
+
     cfg = load_config()
     path = audio.record_fixed(args.seconds, cfg.record_sample_rate)
     try:
@@ -108,6 +133,8 @@ def cmd_record_test(args: argparse.Namespace) -> int:
 
 
 def cmd_transcribe_test(args: argparse.Namespace) -> int:
+    """Transcribe a temporary or user-provided test recording."""
+
     cfg = load_config()
     options = _runtime_options(args)
     path = Path(args.file) if args.file else audio.record_fixed(args.seconds, cfg.record_sample_rate)
@@ -128,6 +155,8 @@ def cmd_transcribe_test(args: argparse.Namespace) -> int:
 
 
 def cmd_benchmark(args: argparse.Namespace) -> int:
+    """Measure local transcription speed for a recorded or provided sample."""
+
     cfg = load_config()
     options = _runtime_options(args)
     path = Path(args.file) if args.file else audio.record_fixed(args.seconds, cfg.record_sample_rate)
@@ -150,6 +179,8 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
 
 
 def cmd_quality_test(args: argparse.Namespace) -> int:
+    """Show raw and normalized transcripts for a single local sample."""
+
     cfg = load_config()
     options = _runtime_options(args)
     path = Path(args.file) if getattr(args, "file", None) else audio.record_fixed(args.seconds, cfg.record_sample_rate)
@@ -172,6 +203,8 @@ def cmd_quality_test(args: argparse.Namespace) -> int:
 
 
 def _parse_tiers(value: str) -> list[str]:
+    """Parse and validate a comma-separated model tier list."""
+
     tiers = [tier.strip() for tier in value.split(",") if tier.strip()]
     valid = {"fast", "small", "cpu", "accuracy"}
     unknown = [tier for tier in tiers if tier not in valid]
@@ -183,6 +216,8 @@ def _parse_tiers(value: str) -> list[str]:
 
 
 def cmd_compare_models(args: argparse.Namespace) -> int:
+    """Transcribe one sample with multiple model tiers for quality comparison."""
+
     cfg = load_config()
     options = _runtime_options(args)
     tiers = _parse_tiers(args.tiers)
@@ -211,6 +246,8 @@ def cmd_compare_models(args: argparse.Namespace) -> int:
 
 
 def cmd_paste_last(args: argparse.Namespace) -> int:
+    """Paste or copy the most recently saved transcript."""
+
     text = read_last_transcript()
     if not text:
         print("No last transcript found.", file=sys.stderr)
@@ -219,6 +256,8 @@ def cmd_paste_last(args: argparse.Namespace) -> int:
 
 
 def cmd_models_fetch(args: argparse.Namespace) -> int:
+    """Download the selected model tier into local model storage."""
+
     cfg = load_config()
     path = fetch_model(cfg, args.tier)
     print(path)
@@ -226,10 +265,18 @@ def cmd_models_fetch(args: argparse.Namespace) -> int:
 
 
 def _shortcut_value(value, default):
+    """Return a CLI override when provided, otherwise use the shortcut default."""
+
     return default if value is None else value
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    """Run the default dictation flow.
+
+    The terminal workflow records until Enter is pressed. The shortcut workflow
+    starts immediately and can stop on silence or a maximum duration.
+    """
+
     cfg = load_config()
     options = _runtime_options(args)
     if getattr(args, "immediate", False):
@@ -279,16 +326,22 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def recommended_shortcut_command() -> str:
+    """Build the recommended command for a GNOME custom keyboard shortcut."""
+
     executable = Path.cwd() / ".venv" / "bin" / "voicepaste"
     return f"{executable} --immediate --stop-on-silence --device cuda --model-tier cpu --quiet"
 
 
 def shortcut_script_text(command: str | None = None) -> str:
+    """Render the shell wrapper used by ``install-shortcut --write-script``."""
+
     command = command or recommended_shortcut_command()
     return "#!/usr/bin/env sh\nexec " + command + ' "$@"\n'
 
 
 def cmd_install_shortcut(args: argparse.Namespace) -> int:
+    """Print shortcut setup instructions and optionally write a helper script."""
+
     command = recommended_shortcut_command()
     print("Recommended GNOME custom shortcut command:")
     print(command)
@@ -308,6 +361,8 @@ def cmd_install_shortcut(args: argparse.Namespace) -> int:
 
 
 def _write_vad_threshold(value: float) -> Path:
+    """Persist a calibrated VAD threshold in the user config file."""
+
     path = write_default_config()
     text = path.read_text(encoding="utf-8")
     line = f"vad_threshold = {value:.5f}"
@@ -320,6 +375,8 @@ def _write_vad_threshold(value: float) -> Path:
 
 
 def cmd_calibrate_silence(args: argparse.Namespace) -> int:
+    """Measure ambient noise and suggest a silence-detection threshold."""
+
     cfg = load_config()
     rms, threshold, path = audio.calibrate_noise(args.seconds, cfg.record_sample_rate)
     try:
@@ -337,6 +394,8 @@ def cmd_calibrate_silence(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Create the VoicePaste argument parser and register subcommands."""
+
     tier_choices = ["fast", "small", "cpu", "accuracy"]
     parser = argparse.ArgumentParser(prog="voicepaste")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -426,6 +485,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the VoicePaste CLI.
+
+    Args:
+        argv: Optional argument list for tests. When omitted, ``argparse`` reads
+            from ``sys.argv``.
+
+    Returns:
+        Process exit status.
+    """
+
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

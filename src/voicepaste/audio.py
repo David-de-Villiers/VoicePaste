@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Audio capture and WAV inspection helpers.
+
+This module owns microphone interaction and temporary WAV creation. It avoids
+ASR, clipboard, and desktop concerns so recording can be tested and reused by
+commands such as `record-test`, `quality-test`, and shortcut mode.
+"""
+
 from dataclasses import dataclass
 from pathlib import Path
 from queue import Empty, Queue
@@ -14,6 +21,8 @@ from .vad import SilenceDetector, estimate_threshold, frame_rms
 
 @dataclass(frozen=True)
 class AudioStats:
+    """Summary statistics for a local WAV recording."""
+
     path: Path
     duration_seconds: float
     rms: float
@@ -22,6 +31,8 @@ class AudioStats:
 
 @dataclass(frozen=True)
 class RecordingResult:
+    """Result of an automatic recording session."""
+
     path: Path
     reason: str
     duration_seconds: float
@@ -36,6 +47,8 @@ def _import_sounddevice():
 
 
 def record_until_enter(sample_rate: int, max_seconds: int) -> Path:
+    """Record from the default input until the user presses Enter."""
+
     sd = _import_sounddevice()
     chunks: list[np.ndarray] = []
 
@@ -57,6 +70,8 @@ def record_until_enter(sample_rate: int, max_seconds: int) -> Path:
 
 
 def record_fixed(seconds: float, sample_rate: int) -> Path:
+    """Record a fixed-duration mono WAV from the default input."""
+
     sd = _import_sounddevice()
     frames = int(seconds * sample_rate)
     print(f"Recording {seconds:.1f}s from default input...")
@@ -75,6 +90,21 @@ def record_immediate(
     vad_threshold: float,
     block_seconds: float = 0.1,
 ) -> RecordingResult:
+    """Record immediately and stop on silence or maximum duration.
+
+    Args:
+        sample_rate: Capture sample rate in Hz.
+        stop_on_silence: Whether RMS-based silence should stop recording.
+        silence_seconds: Sustained silence duration required to stop.
+        max_seconds: Hard recording limit.
+        min_seconds: Minimum duration before silence can stop recording.
+        vad_threshold: RMS threshold below which a frame is considered silent.
+        block_seconds: Input stream callback block duration.
+
+    Returns:
+        RecordingResult containing the temporary WAV path and stop reason.
+    """
+
     sd = _import_sounddevice()
     queue: Queue[np.ndarray] = Queue()
     blocksize = max(1, int(sample_rate * block_seconds))
@@ -119,6 +149,12 @@ def record_immediate(
 
 
 def calibrate_noise(seconds: float, sample_rate: int) -> tuple[float, float, Path]:
+    """Record ambient noise and estimate a VAD threshold.
+
+    Returns:
+        A tuple of `(ambient_rms, suggested_threshold, wav_path)`.
+    """
+
     path = record_fixed(seconds, sample_rate)
     with wave.open(str(path), "rb") as wf:
         frames = wf.readframes(wf.getnframes())
@@ -128,6 +164,8 @@ def calibrate_noise(seconds: float, sample_rate: int) -> tuple[float, float, Pat
 
 
 def write_wav(audio: np.ndarray, sample_rate: int) -> Path:
+    """Write mono float audio samples to a temporary 16-bit WAV file."""
+
     audio = np.clip(audio, -1.0, 1.0)
     pcm = (audio * 32767.0).astype(np.int16)
     tmp = tempfile.NamedTemporaryFile(prefix="voicepaste-", suffix=".wav", delete=False)
@@ -142,6 +180,8 @@ def write_wav(audio: np.ndarray, sample_rate: int) -> Path:
 
 
 def inspect_wav(path: Path) -> AudioStats:
+    """Read a WAV file and compute duration, sample rate, and RMS."""
+
     with wave.open(str(path), "rb") as wf:
         frames = wf.readframes(wf.getnframes())
         sample_rate = wf.getframerate()
@@ -152,6 +192,8 @@ def inspect_wav(path: Path) -> AudioStats:
 
 
 def validate_audio(path: Path, min_duration: float = 0.2, min_rms: float = 0.0001) -> AudioStats:
+    """Validate that a WAV file is long enough and not unexpectedly silent."""
+
     stats = inspect_wav(path)
     if stats.duration_seconds < min_duration:
         raise RuntimeError(f"recording is too short: {stats.duration_seconds:.2f}s")

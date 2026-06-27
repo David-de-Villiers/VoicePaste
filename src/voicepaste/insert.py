@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Focused-window insertion using clipboard plus synthetic paste."""
+
 from dataclasses import dataclass
 import os
 import shutil
@@ -12,16 +14,22 @@ from .config import InsertionConfig
 
 @dataclass(frozen=True)
 class InsertResult:
+    """Result of attempting to copy and paste text."""
+
     inserted: bool
     copied: bool
     message: str
 
 
 def session_type() -> str:
+    """Return the active desktop session type inferred from environment."""
+
     return os.environ.get("XDG_SESSION_TYPE", "").lower() or ("wayland" if os.environ.get("WAYLAND_DISPLAY") else "x11")
 
 
 def insertion_capability() -> dict[str, object]:
+    """Report whether focused paste appears available for this session."""
+
     stype = session_type()
     tools = {
         "xdotool": bool(shutil.which("xdotool")),
@@ -61,6 +69,8 @@ def _simulate_paste(stype: str, paste_key: str) -> tuple[bool, str]:
 
 
 def insert_or_copy(text: str, cfg: InsertionConfig | None = None) -> InsertResult:
+    """Copy text to the clipboard and attempt focused-window paste."""
+
     cfg = cfg or InsertionConfig()
     stype = session_type()
     previous_clipboard: str | None = None

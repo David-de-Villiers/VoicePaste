@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+"""Lightweight RMS-based voice activity detection."""
+
 from dataclasses import dataclass
 
 import numpy as np
 
 
 def silence_recording_available() -> bool:
+    """Return whether shortcut silence recording is implemented."""
+
     return True
 
 
 def frame_rms(samples: np.ndarray) -> float:
+    """Compute root mean square amplitude for audio samples."""
+
     if samples.size == 0:
         return 0.0
     data = samples.astype(np.float32, copy=False)
@@ -18,6 +24,8 @@ def frame_rms(samples: np.ndarray) -> float:
 
 @dataclass
 class SilenceDetector:
+    """Stateful RMS silence detector for streaming audio frames."""
+
     sample_rate: int
     threshold: float
     silence_seconds: float
@@ -28,6 +36,8 @@ class SilenceDetector:
     speech_seen: bool = False
 
     def update(self, frame: np.ndarray) -> str | None:
+        """Update detector state and return a stop reason when triggered."""
+
         frame_seconds = len(frame) / float(self.sample_rate)
         self.elapsed_seconds += frame_seconds
         rms = frame_rms(frame)
@@ -47,4 +57,6 @@ class SilenceDetector:
 
 
 def estimate_threshold(noise_rms: float) -> float:
+    """Estimate a conservative VAD threshold from ambient room RMS."""
+
     return max(0.005, min(0.08, noise_rms * 3.0))

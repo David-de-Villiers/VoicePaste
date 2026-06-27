@@ -278,6 +278,8 @@ Optional lint:
 ruff check .
 ```
 
+See [docs/architecture.md](docs/architecture.md) for the module boundaries and privacy invariants.
+
 Hardware-facing commands:
 
 ```bash

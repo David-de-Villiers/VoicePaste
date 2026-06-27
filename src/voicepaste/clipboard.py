@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+"""Clipboard access wrappers for X11 and Wayland command-line tools."""
+
 import shutil
 import subprocess
 import time
 
 
 def available_clipboard_tools(session_type: str | None = None) -> list[str]:
+    """Return installed clipboard tools in preferred order."""
+
     candidates = ["xclip", "xsel"] if session_type != "wayland" else ["wl-copy", "xclip", "xsel"]
     return [tool for tool in candidates if shutil.which(tool)]
 
 
 def read_text(session_type: str | None = None) -> tuple[bool, str]:
+    """Read text from the clipboard when a supported tool is available."""
+
     tools = available_clipboard_tools(session_type)
     for tool in tools:
         try:
@@ -53,6 +59,8 @@ def read_text(session_type: str | None = None) -> tuple[bool, str]:
 
 
 def copy_text(text: str, session_type: str | None = None) -> tuple[bool, str]:
+    """Copy text to the desktop clipboard without hanging on X11 owners."""
+
     tools = available_clipboard_tools(session_type)
     for tool in tools:
         try:
